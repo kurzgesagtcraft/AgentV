@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AIAvatarKit WebSocket Example</title>
+    <style>
+        body {
+            background-color: #121212;
+            color: #E0E0E0;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            text-align: center;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+
+        h1 {
+            color: #FFFFFF;
+            font-size: clamp(1.5rem, 4vw, 2rem);
+            margin: 0 0 20px 0;
+        }
+
+        .avatar-frame {
+            display: block;
+            width: clamp(256px, 60vw, 512px);
+            aspect-ratio: 1;
+            background: linear-gradient(45deg, #FF007F, #7F00FF);
+            border-radius: 50%;
+            padding: 4px;
+            transition: background 0.3s ease;
+            margin: 20px auto;
+        }
+
+        .avatar-container {
+            position: relative;
+            background: #000;
+            border-radius: 50%;
+            width: 100%;
+            height: 100%;
+            max-width: 512px;
+            max-height: 512px;
+            aspect-ratio: 1;
+            overflow: hidden;
+        }
+
+        .avatar-container img {
+            display: block;
+        }
+
+        .face-image {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .mouth-overlay {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            pointer-events: none;
+            z-index: 1;
+            display: none;
+        }
+
+        .button-container {
+            margin: 20px 0;
+        }
+
+        button {
+            background-color: #1E1E1E;
+            border: none;
+            padding: 12px 24px;
+            color: #E0E0E0;
+            font-size: 16px;
+            cursor: pointer;
+            margin: 5px;
+            border-radius: 4px;
+            transition: background-color 0.3s ease;
+            min-height: 44px;
+        }
+
+        button:hover {
+            background-color: #333333;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>AIAvatarKit WebSocket Example</h1>
+
+    <div class="avatar-frame" id="avatarFrame">
+        <div class="avatar-container">
+            <img id="faceImage" class="face-image" src="images/neutral.png" alt="Avatar Face">
+            <img id="mouthImage" class="mouth-overlay" alt="Mouth">
+        </div>
+    </div>
+
+    <div class="button-container">
+        <button id="startBtn">Start</button>
+        <button id="stopBtn">Stop</button>
+        <button id="interruptToggleBtn">Interrupt Speech: OFF</button>
+    </div>
+    
+    <div class="input-level">
+        <span style="color: #E0E0E0;">Input: </span>
+        <span id="inputLevel">0.0 dB</span>
+    </div>
+
+    <script src="aiavatar.js"></script>
+    <script src="lipsync.js"></script>
+    <script src="blink.js"></script>
+    <script>
+        const sessionId = crypto.randomUUID(); 
+        const userId = "user01";
+        const faceImage = document.getElementById("faceImage");
+        const mouthImage = document.getElementById("mouthImage");
+
+        // AIAvatar
+        const aiavatar = new AIAvatarClient({
+            webSocketUrl: "../ws",
+            faceImage: faceImage,
+            faceImagePaths: {
+                neutral: "images/neutral.png",
+                joy: "images/joy.png",
+                angry: "images/angry.png",
+                sorrow: "images/sorrow.png",
+                fun: "images/fun.png",
+                surprised: "images/surprised.png",
+                eyes_closed: "images/eyes_closed.png"
+            },
+        });
+
+        // LipSync
+        const lipsyncEngine = new LipSyncEngine({
+            applyTarget: mouthImage,
+            mouthPathTemplate: "images/mouth_{mouth}.png",
+            hideOnClosed: true,
+        });
+        aiavatar.onPlaybackAnalyze = ({ rms, centroid01, tSec }) => {
+            lipsyncEngine.apply({ rms, centroid01, tSec }); 
+        };
+        aiavatar.onResetFace = () => { lipsyncEngine.reset(); };
+
+        // Blink
+        const blinker = new BlinkController({
+            targetImage: faceImage,
+            facePathTemplate: "images/{face}.png",
+            blinkFaceName: "eyes_closed",
+            stateProvider: () => ({ isSpeaking: aiavatar.isAudioPlaying, currentFace: aiavatar.getCurrentFace() }),
+        });
+
+        // Example: Show microphone effect and input level
+        const avatarFrame = document.getElementById("avatarFrame");
+        const inputLevelElement = document.getElementById("inputLevel");
+        let rmsSum = 0;
+        let rmsCount = 0;
+        let lastUpdateTime = Date.now();
+        
+        aiavatar.onMicrophoneDataSend = (rms) => {
+            if (rms > 0.01) {
+                avatarFrame.style.background = "linear-gradient(45deg, #FF0000, #FF7F00)";
+            } else {
+                avatarFrame.style.background = "linear-gradient(45deg, #FF007F, #7F00FF)";
+            }
+            
+            // Accumulate RMS values for averaging
+            rmsSum += rms;
+            rmsCount++;
+            
+            // Update display every 0.5 seconds with average
+            const currentTime = Date.now();
+            if (currentTime - lastUpdateTime >= 500) {
+                const avgRms = rmsSum / rmsCount;
+                const dbLevel = avgRms > 0 ? 20 * Math.log10(avgRms) : -80;
+                inputLevelElement.textContent = `${dbLevel.toFixed(1)} dB`;
+                
+                // Reset for next interval
+                rmsSum = 0;
+                rmsCount = 0;
+                lastUpdateTime = currentTime;
+            }
+        }
+
+        // Custom response handling
+        aiavatar.onResponseReceived = (response) => {
+            // Example: Set microphone volume threshold for filtering noise
+            if (response.type == "connected") {
+                const configMessage = {
+                    type: "config",
+                    session_id: sessionId,
+                    user_id: userId,
+                    metadata: {"volume_db_threshold": -50}  // Detect voice over -50 dB
+                };
+                aiavatar.ws.send(JSON.stringify(configMessage));
+            }
+
+            // Example: Show thinking effect while server is processing
+            if (response.type == "start") {
+                aiavatar.updateFace("eyes_closed", 10);
+            } else if (response.type == "chunk" && response.metadata.is_first_chunk) {
+                aiavatar.updateFace("neutral", 0);
+            } else if (response.type == "tool_call") {
+                console.log(response.metadata);
+            }
+
+            // Disconnect
+            if (response.text !== null && response.text.indexOf("[operation:hangup]") >= 0) {
+                // Wait for audio playback to finish before stopping
+                const waitForAudioEnd = () => {
+                    if (aiavatar.isAudioPlaying) {
+                        setTimeout(waitForAudioEnd, 100); // Check every 100ms
+                    } else {
+                        aiavatar.stopListening(sessionId);
+                        document.getElementById("inputLevel").textContent = "0.0 dB";
+                    }
+                };
+                setTimeout(waitForAudioEnd, 0);
+            }
+
+            // Example: Show user and AI's message in UI
+            if (response.metadata && response.metadata.request_text) {
+                // document.getElementById("user-balloon").innerText = response.metadata.request_text;
+            }
+            if (response.voice_text) {
+                // document.getElementById("ai-balloon").innerText = response.voice_text;
+            }
+        }
+
+        // Interrupt toggle functionality
+        let interruptEnabled = false;
+        const interruptToggleBtn = document.getElementById("interruptToggleBtn");
+        
+        interruptToggleBtn.addEventListener("click", () => {
+            interruptEnabled = !interruptEnabled;
+            aiavatar.cancelEcho = !interruptEnabled;
+            interruptToggleBtn.textContent = interruptEnabled ? "Interrupt Speech: ON" : "Interrupt Speech: OFF";
+            interruptToggleBtn.style.backgroundColor = interruptEnabled ? "#2E7D32" : "#1E1E1E";
+        });
+
+        // Start and stop buttons
+        document.getElementById("startBtn").addEventListener("click", () => aiavatar.startListening(sessionId, userId));
+        document.getElementById("stopBtn").addEventListener("click", () => aiavatar.stopListening(sessionId));
+    </script>
+</body>
+
+</html>

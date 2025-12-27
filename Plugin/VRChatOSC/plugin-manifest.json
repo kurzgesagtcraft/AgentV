@@ -1,0 +1,44 @@
+{
+  "name": "VRChatOSC",
+  "displayName": "VRChat OSC 控制器",
+  "version": "1.0.0",
+  "description": "通过 OSC 协议控制 VRChat 虚拟形象的表情和动作。支持设置表情（Face）和触发动作（Emote/Animation）。",
+  "pluginType": "hybridservice",
+  "entryPoint": {
+    "script": "VRChatOSC.js"
+  },
+  "communication": {
+    "protocol": "direct"
+  },
+  "capabilities": {
+    "invocationCommands": [
+      {
+        "command": "VRChatOSC",
+        "description": "控制 VRChat 形象的表情或动作。参数：\n- action_type: 'face' (表情) 或 'animation' (动作)\n- name: 表情或动作的名称 (如 'joy', 'angry', 'wave', 'dance')\n- duration: 持续时间(秒)，默认 3.0",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name: 「始」VRChatOSC「末」\naction_type: 「始」face「末」\nname: 「始」joy「末」\nduration: 「始」5.0「末」\n<<<[END_TOOL_REQUEST]>>>"
+      }
+    ]
+  },
+  "configSchema": {
+    "VRCHAT_OSC_HOST": {
+      "type": "string",
+      "default": "127.0.0.1",
+      "description": "VRChat 运行机器的 IP 地址"
+    },
+    "VRCHAT_OSC_PORT": {
+      "type": "integer",
+      "default": 9000,
+      "description": "VRChat OSC 监听端口"
+    },
+    "VRCHAT_FACE_ADDRESS": {
+      "type": "string",
+      "default": "/avatar/parameters/FaceOSC",
+      "description": "控制表情的 OSC 地址"
+    },
+    "VRCHAT_ANIMATION_ADDRESS": {
+      "type": "string",
+      "default": "/avatar/parameters/VRCEmote",
+      "description": "控制动作的 OSC 地址"
+    }
+  }
+}

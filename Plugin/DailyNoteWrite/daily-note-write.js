@@ -210,6 +210,9 @@ async function generateTagsWithAI(content, maxRetries = 3) {
             debugLog(`Calling AI API (attempt ${attempt}/${maxRetries}) with model: ${TAG_MODEL}`);
             
             const fetch = (await import('node-fetch')).default;
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 45000); // 内部 API 调用限时 45 秒，留出余量给插件管理器
+
             const response = await fetch(`${API_URL}/v1/chat/completions`, {
                 method: 'POST',
                 headers: {
@@ -217,8 +220,8 @@ async function generateTagsWithAI(content, maxRetries = 3) {
                     'Authorization': `Bearer ${API_KEY}`
                 },
                 body: JSON.stringify(requestData),
-                timeout: 60000 // 60秒超时
-            });
+                signal: controller.signal
+            }).finally(() => clearTimeout(timeoutId));
             
             // 检查是否为需要重试的错误码
             if (response.status === 500 || response.status === 503) {
@@ -302,7 +305,14 @@ async function processTagsInContent(contentText) {
     } else {
         // 没有Tag，调用AI生成
         debugLog('No tag detected, generating with AI...');
-        const generatedTag = await generateTagsWithAI(contentText);
+        // 设置一个整体超时保护，防止 generateTagsWithAI 内部重试逻辑耗时过长
+        const generatedTag = await Promise.race([
+            generateTagsWithAI(contentText),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Tag generation overall timeout')), 150000))
+        ]).catch(err => {
+            console.error('[DailyNoteWrite] Tag generation failed or timed out:', err.message);
+            return null;
+        });
         
         if (generatedTag) {
             // AI生成了Tag，修复格式并附加

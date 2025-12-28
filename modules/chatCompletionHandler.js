@@ -27,32 +27,35 @@ async function fetchWithRetry(
   { retries = 3, delay = 1000, debugMode = false, onRetry = null } = {},
 ) {
   const { default: fetch } = await import('node-fetch');
+  let lastError = null;
+
   for (let i = 0; i < retries; i++) {
     try {
       const response = await fetch(url, options);
-      if (response.status === 500 || response.status === 503) {
+      
+      // 500, 502, 503, 504 都是常见的可重试错误
+      if ([500, 502, 503, 504].includes(response.status)) {
+        const errorMsg = `Received status ${response.status} (${response.statusText})`;
         if (debugMode) {
           console.warn(
-            `[Fetch Retry] Received status ${response.status}. Retrying in ${delay}ms... (${i + 1}/${retries})`,
+            `[Fetch Retry] ${errorMsg}. Retrying in ${delay}ms... (${i + 1}/${retries})`,
           );
         }
         if (onRetry) {
           await onRetry(i + 1, { status: response.status, message: response.statusText });
         }
-        await new Promise(resolve => setTimeout(resolve, delay * (i + 1))); // Increase delay for subsequent retries
-        continue; // Try again
+        lastError = new Error(errorMsg);
+        await new Promise(resolve => setTimeout(resolve, delay * (i + 1)));
+        continue;
       }
-      return response; // Success or non-retriable error
+      return response;
     } catch (error) {
-      // If the request was aborted, don't retry, just rethrow the error immediately.
+      lastError = error;
       if (error.name === 'AbortError') {
         if (debugMode) console.log('[Fetch Retry] Request was aborted. No retries will be attempted.');
         throw error;
       }
-      if (i === retries - 1) {
-        console.error(`[Fetch Retry] All retries failed. Last error: ${error.message}`);
-        throw error; // Rethrow the last error after all retries fail
-      }
+      
       if (debugMode) {
         console.warn(
           `[Fetch Retry] Fetch failed with error: ${error.message}. Retrying in ${delay}ms... (${i + 1}/${retries})`,
@@ -61,10 +64,38 @@ async function fetchWithRetry(
       if (onRetry) {
         await onRetry(i + 1, { status: 'NETWORK_ERROR', message: error.message });
       }
-      await new Promise(resolve => setTimeout(resolve, delay * (i + 1)));
+
+      if (i < retries - 1) {
+        await new Promise(resolve => setTimeout(resolve, delay * (i + 1)));
+      }
     }
   }
-  throw new Error('Fetch failed after all retries.');
+  
+  let finalErrorMessage = lastError ? lastError.message : 'Unknown error';
+  
+  // 如果错误消息已经包含重试失败的前缀，直接抛出原始错误，避免递归嵌套
+  if (finalErrorMessage.includes('Fetch failed after all retries')) {
+    // 提取最深层的错误信息，避免 "Fetch failed after all retries. Error: Fetch failed after all retries..."
+    const parts = finalErrorMessage.split('Last error: ');
+    let deepestError = parts[parts.length - 1].trim();
+    
+    // 循环清理可能存在的嵌套 "Error: " 前缀
+    while (deepestError.startsWith('Error: ')) {
+      deepestError = deepestError.substring(7).trim();
+    }
+    
+    const errorWithContext = `Fetch failed after all retries for ${url}. Last error: ${deepestError}`;
+    
+    // 创建一个新错误，但保持堆栈或至少不让消息无限增长
+    const newError = new Error(errorWithContext);
+    newError.stack = lastError.stack;
+    throw newError;
+  }
+
+  // 否则，记录并抛出带前缀的新错误，包含 URL 以便调试
+  const errorWithContext = `Fetch failed after all retries for ${url}. Last error: ${finalErrorMessage}`;
+  console.error(`[Fetch Retry] ${errorWithContext}`);
+  throw new Error(errorWithContext);
 }
 // 辅助函数：根据新上下文刷新对话历史中的RAG区块
 async function _refreshRagBlocksIfNeeded(messages, newContext, pluginManager, debugMode = false) {
@@ -1824,7 +1855,15 @@ class ChatCompletionHandler {
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
 
-          const errorContent = `[ERROR] 代理服务器在连接上游API时失败，可能已达到重试上限或网络错误: ${error.message}`;
+          let cleanErrorMessage = error.message;
+          if (cleanErrorMessage.includes('Fetch failed after all retries')) {
+            const parts = cleanErrorMessage.split('Last error: ');
+            cleanErrorMessage = parts[parts.length - 1].trim();
+            while (cleanErrorMessage.startsWith('Error: ')) {
+              cleanErrorMessage = cleanErrorMessage.substring(7).trim();
+            }
+          }
+          const errorContent = `[ERROR] 代理服务器在连接上游API时失败，可能已达到重试上限或网络错误: ${cleanErrorMessage}`;
           
           // Send an error chunk
           const errorPayload = {

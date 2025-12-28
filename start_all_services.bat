@@ -9,6 +9,9 @@ echo [1/3] Starting F5-TTS OpenAI API Server...
 :: 使用 /d 指定工作目录，并直接调用 bat
 start "F5-TTS Server" /d "%~dp0DMOSpeech2" cmd /c "启动OpenAI接口服务.bat"
 
+echo Waiting for TTS service to initialize (10s)...
+timeout /t 10 /nobreak >nul
+
 :: 2. Start Node.js Backend
 echo [2/3] Starting Node.js Backend Server...
 start "Node.js Backend" cmd /c "node server.js"

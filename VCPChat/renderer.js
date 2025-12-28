@@ -376,11 +376,18 @@ import { setupEventListeners } from './modules/event-listeners.js';
         // UI updates (creating new DOM elements) should only happen if the view is relevant.
         switch (type) {
             case 'data':
-                window.messageRenderer.appendStreamChunk(messageId, chunk, context);
+                if (window.messageRenderer) {
+                    window.messageRenderer.appendStreamChunk(messageId, chunk, context);
+                }
                 break;
 
             case 'end':
-                window.messageRenderer.finalizeStreamedMessage(messageId, finish_reason || 'completed', context);
+                console.log(`[onVCPStreamEvent] Handling 'end' event for ${messageId}. Calling finalizeStreamedMessage...`);
+                if (window.messageRenderer) {
+                    window.messageRenderer.finalizeStreamedMessage(messageId, finish_reason || 'completed', context);
+                } else {
+                    console.error("[onVCPStreamEvent] CRITICAL: window.messageRenderer is not available!");
+                }
                 if (context && !context.isGroupMessage) {
                     // This can run in the background
                     await window.chatManager.attemptTopicSummarizationIfNeeded();
@@ -1756,7 +1763,6 @@ async function handleConfirmForward() {
 // Expose these functions globally for ui-helpers.js
 // Expose the new helper functions on the window object for modules that need them
 // These are no longer needed as uiHelperFunctions handles them directly
-window.ensureAudioContext = () => { /* Placeholder, will be defined in setupTtsListeners */ };
 window.showForwardModal = showForwardModal;
 
 // Make globalSettings accessible for notification renderer

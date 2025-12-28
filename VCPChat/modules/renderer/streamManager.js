@@ -911,6 +911,67 @@ export async function finalizeStreamedMessage(messageId, finishReason, context) 
             uiHelper.scrollToBottom();
         }
     }
+
+    // --- 🟢 核心修复：将 TTS 触发逻辑移出 isForCurrentView 块 ---
+    // 这样即使在后台对话中，只要消息结束，也会尝试触发 TTS
+    const currentSelectedItem = refs.currentSelectedItemRef.get();
+    console.log(`[StreamManager] Finalizing message ${messageId}. Checking TTS trigger...`, {
+        isGroup: storedContext.isGroupMessage,
+        agentId: storedContext.agentId,
+        currentSelectedId: currentSelectedItem?.id,
+        isForCurrentView: isForCurrentView
+    });
+
+    // 更加健壮的 Agent 配置获取逻辑
+    let agentConfig = null;
+    if (storedContext.isGroupMessage) {
+        agentConfig = currentSelectedItem?.config?.agents?.find(a => a.id === storedContext.agentId);
+    } else if (currentSelectedItem && currentSelectedItem.id === storedContext.agentId) {
+        // 对于私聊，如果当前选中的就是该 Agent，直接使用其配置
+        agentConfig = currentSelectedItem.config || currentSelectedItem;
+    }
+    
+    // 如果仍然没有找到配置（可能是后台消息或切换了 Agent），尝试从主进程获取
+    if (!agentConfig && storedContext.agentId) {
+        console.log(`[StreamManager] Agent config not in current view, fetching for ${storedContext.agentId}...`);
+        try {
+            agentConfig = await refs.electronAPI.getAgentConfig(storedContext.agentId);
+        } catch (e) {
+            console.error(`[StreamManager] Failed to fetch agent config for TTS:`, e);
+        }
+    }
+
+    if (agentConfig) {
+        console.log(`[StreamManager] Agent config resolved for TTS:`, {
+            name: agentConfig.name || agentConfig.agentName,
+            hasVoice: !!agentConfig.ttsVoicePrimary,
+            voice: agentConfig.ttsVoicePrimary,
+            speed: agentConfig.ttsSpeed
+        });
+
+        if (finalFullText) {
+            // **关键修复：在自动触发前，确保音频上下文已激活**
+            if (typeof window.ensureAudioContext === 'function') {
+                console.log(`[StreamManager] Ensuring AudioContext is active...`);
+                window.ensureAudioContext();
+            }
+
+            console.log(`[StreamManager] >>> TRIGGERING TTS <<< for message ${messageId}, text length: ${finalFullText.length}`);
+            refs.electronAPI.sovitsSpeak({
+                text: finalFullText,
+                voice: agentConfig.ttsVoicePrimary,
+                speed: parseFloat(agentConfig.ttsSpeed) || 1.0,
+                msgId: messageId,
+                ttsRegex: agentConfig.ttsRegexPrimary,
+                voiceSecondary: agentConfig.ttsVoiceSecondary,
+                ttsRegexSecondary: agentConfig.ttsRegexSecondary
+            });
+        } else {
+            console.log(`[StreamManager] TTS skipped: voicePrimary=${agentConfig.ttsVoicePrimary}, hasText=${!!finalFullText}`);
+        }
+    } else {
+        console.warn(`[StreamManager] TTS skipped: Could not resolve agentConfig for ${storedContext.agentId}.`);
+    }
     
     // 🟢 使用防抖保存
     if (storedContext.topicId !== 'assistant_chat') {

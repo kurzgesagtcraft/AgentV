@@ -93,17 +93,23 @@ class SovitsTTS {
             model: "f5-tts",
             input: text,
             voice: voice || "default",
-            response_format: "wav",
-            speed: speed || 1.0
+            response_format: "wav"
         };
+        
+        // 只有当 speed 不为 1.0 时才添加，以保持与标准 OpenAI API 的最大兼容性
+        if (speed && parseFloat(speed) !== 1.0) {
+            payload.speed = parseFloat(speed);
+        }
 
         try {
-            console.log('[TTS] 发送API请求:', JSON.stringify(payload));
+            console.log(`[TTS] 发送API请求到 ${SOVITS_API_BASE_URL}/v1/audio/speech:`, JSON.stringify(payload));
             const response = await axios.post(`${SOVITS_API_BASE_URL}/v1/audio/speech`, payload, {
                 responseType: 'arraybuffer',
                 headers: {
+                    'Content-Type': 'application/json',
                     'Accept': 'audio/wav, audio/x-wav, audio/*'
-                }
+                },
+                timeout: 60000 // 增加到60秒超时，适配 F5-TTS 首次加载
             });
             console.log(`[TTS]收到API响应: 状态 ${response.status}, 类型 ${response.headers['content-type']}, 长度 ${response.data.byteLength}`);
 
@@ -268,11 +274,9 @@ class SovitsTTS {
             ttsRegexSecondary
         } = options;
 
-        // 如果没有选择任何主语言模型，则不执行任何操作
-        if (!voice) {
-            console.log("[TTS] No primary voice model selected. Aborting speak.");
-            return;
-        }
+        // 如果没有选择任何主语言模型，尝试使用 "default" 降级，而不是直接中止
+        const effectiveVoice = voice || "default";
+        console.log(`[TTS] Starting speak task. Voice: ${effectiveVoice}, msgId: ${msgId}`);
 
         const segments = this._segmentTextForBilingualTTS(text, ttsRegex, ttsRegexSecondary);
 
@@ -282,7 +286,7 @@ class SovitsTTS {
         }
 
         const tasks = segments.map(seg => {
-            const taskVoice = seg.lang === 'secondary' && voiceSecondary ? voiceSecondary : voice;
+            const taskVoice = seg.lang === 'secondary' && voiceSecondary ? voiceSecondary : effectiveVoice;
             // 将每个片段再按换行符分割，以保持原有的分段逻辑
             return this.splitText(seg.text).map(chunk => ({
                 text: chunk,

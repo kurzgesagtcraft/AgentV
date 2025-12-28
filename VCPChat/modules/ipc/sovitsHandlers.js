@@ -18,7 +18,11 @@ function initialize(mainWindow) {
     });
 
     ipcMain.on('sovits-speak', (event, options) => {
-        if (!sovitsTTSInstance) return;
+        console.log(`[IPC Sovits] Received 'sovits-speak' event for msgId: ${options.msgId}`);
+        if (!sovitsTTSInstance) {
+            console.error("[IPC Sovits] sovitsTTSInstance is not initialized!");
+            return;
+        }
         // The speak method now expects a single options object.
         sovitsTTSInstance.stop(); // Ensure any previous speech is stopped.
         // Pass the event sender to the speak method to reply to the correct window

@@ -950,22 +950,29 @@ export async function finalizeStreamedMessage(messageId, finishReason, context) 
         });
 
         if (finalFullText) {
-            // **关键修复：在自动触发前，确保音频上下文已激活**
-            if (typeof window.ensureAudioContext === 'function') {
-                console.log(`[StreamManager] Ensuring AudioContext is active...`);
-                window.ensureAudioContext();
-            }
+            // 过滤掉 ToolUSE 内容 (<<<[TOOL_REQUEST]>>> ... <<<[END_TOOL_REQUEST]>>>)
+            const ttsText = finalFullText.replace(/<<<\[TOOL_REQUEST\]>>>[\s\S]*?<<<\[END_TOOL_REQUEST\]>>>/g, '').trim();
 
-            console.log(`[StreamManager] >>> TRIGGERING TTS <<< for message ${messageId}, text length: ${finalFullText.length}`);
-            refs.electronAPI.sovitsSpeak({
-                text: finalFullText,
-                voice: agentConfig.ttsVoicePrimary,
-                speed: parseFloat(agentConfig.ttsSpeed) || 1.0,
-                msgId: messageId,
-                ttsRegex: agentConfig.ttsRegexPrimary,
-                voiceSecondary: agentConfig.ttsVoiceSecondary,
-                ttsRegexSecondary: agentConfig.ttsRegexSecondary
-            });
+            if (ttsText) {
+                // **关键修复：在自动触发前，确保音频上下文已激活**
+                if (typeof window.ensureAudioContext === 'function') {
+                    console.log(`[StreamManager] Ensuring AudioContext is active...`);
+                    window.ensureAudioContext();
+                }
+
+                console.log(`[StreamManager] >>> TRIGGERING TTS <<< for message ${messageId}, filtered text length: ${ttsText.length}`);
+                refs.electronAPI.sovitsSpeak({
+                    text: ttsText,
+                    voice: agentConfig.ttsVoicePrimary,
+                    speed: parseFloat(agentConfig.ttsSpeed) || 1.0,
+                    msgId: messageId,
+                    ttsRegex: agentConfig.ttsRegexPrimary,
+                    voiceSecondary: agentConfig.ttsVoiceSecondary,
+                    ttsRegexSecondary: agentConfig.ttsRegexSecondary
+                });
+            } else {
+                console.log(`[StreamManager] TTS skipped: No text remaining after filtering ToolUSE.`);
+            }
         } else {
             console.log(`[StreamManager] TTS skipped: voicePrimary=${agentConfig.ttsVoicePrimary}, hasText=${!!finalFullText}`);
         }

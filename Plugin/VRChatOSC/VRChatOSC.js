@@ -19,14 +19,20 @@ function buildOscMessage(address, value) {
     const addressBuffer = Buffer.alloc(addressLen + addressPad);
     addressBuffer.write(address);
 
-    const typeTag = ",i";
+    // 根据值类型决定 OSC 类型标签
+    const isFloat = !Number.isInteger(value);
+    const typeTag = isFloat ? ",f" : ",i";
     const typeTagLen = typeTag.length + 1;
     const typeTagPad = (4 - (typeTagLen % 4)) % 4;
     const typeTagBuffer = Buffer.alloc(typeTagLen + typeTagPad);
     typeTagBuffer.write(typeTag);
 
     const valueBuffer = Buffer.alloc(4);
-    valueBuffer.writeInt32BE(value);
+    if (isFloat) {
+        valueBuffer.writeFloatBE(value);
+    } else {
+        valueBuffer.writeInt32BE(value);
+    }
 
     return Buffer.concat([addressBuffer, typeTagBuffer, valueBuffer]);
 }
@@ -57,10 +63,10 @@ function shutdown() {
 }
 
 async function processToolCall(args) {
-    const { action_type, name, duration = 3.0 } = args;
+    const { action_type, name, value: directValue, duration = 3.0 } = args;
     
-    if (!action_type || !name) {
-        return { status: "error", error: "Missing 'action_type' or 'name'." };
+    if (!action_type) {
+        return { status: "error", error: "Missing 'action_type'." };
     }
 
     // 映射名称到数值 (参考 aiavatarkit)
@@ -89,12 +95,39 @@ async function processToolCall(args) {
 
     if (action_type === 'face') {
         address = FACE_ADDRESS;
-        value = faceMap[name.toLowerCase()];
+        value = faceMap[name?.toLowerCase()];
         if (value === undefined) value = parseInt(name, 10); // 允许直接传数值
     } else if (action_type === 'animation') {
         address = ANIMATION_ADDRESS;
-        value = animationMap[name.toLowerCase()];
+        value = animationMap[name?.toLowerCase()];
         if (value === undefined) value = parseInt(name, 10);
+    } else if (action_type === 'move') {
+        // 移动控制：支持 Vertical, Horizontal, LookHorizontal 等
+        const moveMap = {
+            "forward": "/input/Vertical",
+            "backward": "/input/Vertical",
+            "left": "/input/Horizontal",
+            "right": "/input/Horizontal",
+            "lookleft": "/input/LookHorizontal",
+            "lookright": "/input/LookHorizontal",
+            "jump": "/input/Jump"
+        };
+        address = moveMap[name?.toLowerCase()] || name; // 如果不在 map 中，尝试直接作为地址
+        
+        // 处理移动数值
+        if (directValue !== undefined) {
+            value = parseFloat(directValue);
+        } else {
+            // 默认逻辑：forward=1, backward=-1 等
+            const nameLower = name?.toLowerCase();
+            if (nameLower === 'forward' || nameLower === 'right' || nameLower === 'lookright' || nameLower === 'jump') value = 1;
+            else if (nameLower === 'backward' || nameLower === 'left' || nameLower === 'lookleft') value = -1;
+            else value = 0;
+        }
+    } else if (action_type === 'parameter') {
+        // 通用参数控制
+        address = name.startsWith('/') ? name : `/avatar/parameters/${name}`;
+        value = directValue !== undefined ? parseFloat(directValue) : 1;
     } else {
         return { status: "error", error: `Invalid action_type: ${action_type}` };
     }

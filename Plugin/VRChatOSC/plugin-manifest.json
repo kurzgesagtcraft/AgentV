@@ -14,8 +14,8 @@
     "invocationCommands": [
       {
         "command": "VRChatOSC",
-        "description": "控制 VRChat 形象的表情或动作。参数：\n- action_type: 'face' (表情) 或 'animation' (动作)\n- name: 表情或动作的名称 (如 'joy', 'angry', 'wave', 'dance')\n- duration: 持续时间(秒)，默认 3.0",
-        "example": "<<<[TOOL_REQUEST]>>>\ntool_name: 「始」VRChatOSC「末」\naction_type: 「始」face「末」\nname: 「始」joy「末」\nduration: 「始」5.0「末」\n<<<[END_TOOL_REQUEST]>>>"
+        "description": "控制 VRChat 形象的表情、动作、移动或参数。参数：\n- action_type: 'face' (表情), 'animation' (动作), 'move' (移动), 'parameter' (通用参数)\n- name: 名称 (如 'joy', 'wave', 'forward', 'jump', 或具体参数名)\n- value: 数值 (仅用于 move 和 parameter)\n- duration: 持续时间(秒)，默认 3.0",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name: 「始」VRChatOSC「末」,\naction_type: 「始」face「末」,\nname: 「始」joy「末」,\nduration: 「始」5.0「末」\n<<<[END_TOOL_REQUEST]>>>"
       }
     ]
   },

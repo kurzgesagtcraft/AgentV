@@ -45,15 +45,15 @@ class SovitsTTS {
         }
 
         try {
-            console.log(`正在从 ${SOVITS_API_BASE_URL}/models 获取模型列表...`);
-            const response = await axios.post(`${SOVITS_API_BASE_URL}/models`, { version: "v2ProPlus" });
+            console.log(`正在从 ${SOVITS_API_BASE_URL}/api/models 获取模型列表...`);
+            const response = await axios.get(`${SOVITS_API_BASE_URL}/api/models`);
 
-            if (response.data && response.data.msg === "获取成功" && response.data.models) {
+            if (response.data && response.data.status === "success" && response.data.models) {
                 await fs.writeFile(MODELS_CACHE_PATH, JSON.stringify(response.data.models, null, 2));
-                console.log('Sovits模型列表已获取并缓存。');
+                console.log('F5-TTS模型列表已获取并缓存。');
                 return response.data.models;
             } else {
-                console.error("获取Sovits模型列表失败: ", response.data);
+                console.error("获取F5-TTS模型列表失败: ", response.data);
                 return null;
             }
         } catch (error) {
@@ -76,7 +76,7 @@ class SovitsTTS {
      */
     async textToSpeech(text, voice, speed) {
         const cacheKey = crypto.createHash('md5').update(text + voice + speed).digest('hex');
-        const cacheFilePath = path.join(TTS_CACHE_DIR, `${cacheKey}.mp3`);
+        const cacheFilePath = path.join(TTS_CACHE_DIR, `${cacheKey}.wav`);
         console.log(`[TTS] 尝试缓存路径: ${cacheFilePath}`);
 
         // 1. 检查缓存
@@ -89,25 +89,12 @@ class SovitsTTS {
         }
 
         // 2. 如果没有缓存，请求API
-        // 根据模型名称动态确定语言
-        let promptLang = "中文";
-        if (voice.includes('日语')) {
-            promptLang = "日语";
-        }
-        // 可以在这里添加更多语言的判断，例如 '英语', '韩语' 等
-
         const payload = {
-            model: "tts-v2ProPlus",
+            model: "f5-tts",
             input: text,
-            voice: voice,
-            response_format: "mp3",
-            speed: speed,
-            other_params: {
-                text_lang: promptLang === "日语" ? "日语" : "中英混合", // 动态设置 text_lang
-                prompt_lang: promptLang, // 动态设置语言
-                emotion: "默认",
-                text_split_method: "按标点符号切",
-            }
+            voice: voice || "default",
+            response_format: "wav",
+            speed: speed || 1.0
         };
 
         try {
@@ -117,7 +104,7 @@ class SovitsTTS {
             });
             console.log(`[TTS]收到API响应: 状态 ${response.status}, 类型 ${response.headers['content-type']}`);
 
-            if (response.headers['content-type'] === 'audio/mpeg') {
+            if (response.headers['content-type'] === 'audio/wav' || response.headers['content-type'] === 'audio/x-wav') {
                 const audioBuffer = Buffer.from(response.data);
                 // 3. 保存到缓存
                 try {

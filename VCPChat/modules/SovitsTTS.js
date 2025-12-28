@@ -100,11 +100,16 @@ class SovitsTTS {
         try {
             console.log('[TTS] 发送API请求:', JSON.stringify(payload));
             const response = await axios.post(`${SOVITS_API_BASE_URL}/v1/audio/speech`, payload, {
-                responseType: 'arraybuffer'
+                responseType: 'arraybuffer',
+                headers: {
+                    'Accept': 'audio/wav, audio/x-wav, audio/*'
+                }
             });
-            console.log(`[TTS]收到API响应: 状态 ${response.status}, 类型 ${response.headers['content-type']}`);
+            console.log(`[TTS]收到API响应: 状态 ${response.status}, 类型 ${response.headers['content-type']}, 长度 ${response.data.byteLength}`);
 
-            if (response.headers['content-type'] === 'audio/wav' || response.headers['content-type'] === 'audio/x-wav') {
+            // 宽松匹配 content-type，因为有些服务器可能返回 audio/wave 或其他变体
+            const contentType = response.headers['content-type'] || '';
+            if (contentType.includes('audio') || response.data.byteLength > 0) {
                 const audioBuffer = Buffer.from(response.data);
                 // 3. 保存到缓存
                 try {

@@ -183,3 +183,20 @@ image/fluxgen/
 .kiro/steering/byterover-rules.md
 .qoder/rules/byterover-rules.md
 .augment/rules/byterover-rules.md
+
+# Large files from DMOSpeech2
+DMOSpeech2/ckpts/
+DMOSpeech2/data/
+DMOSpeech2/logs/
+DMOSpeech2/output/
+DMOSpeech2/py312/
+DMOSpeech2/output.wav
+DMOSpeech2/参考音频/
+DMOSpeech2/f5_tts/SenseVoiceSmall/
+DMOSpeech2/vocos/
+DMOSpeech2/voices/
+*.wav
+*.WAV
+*.pt
+*.bin
+*.model

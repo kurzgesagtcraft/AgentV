@@ -15,4 +15,4 @@ echo [3/3] Starting VCPChat Frontend...
 start "VCPChat Frontend" cmd /c "cd VCPChat && npm start"
 
 echo All services have been triggered. Please check the individual windows for status.
-pause
+pause 

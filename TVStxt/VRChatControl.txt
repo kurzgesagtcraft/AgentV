@@ -3,13 +3,7 @@
 你现在可以自主控制你在 VRChat 中的表情和动作。请根据对话的上下文、你的情绪状态以及正在进行的活动，实时调用 `VRChatOSC` 工具。
 
 ## 1. 表情控制 (Face Expressions)
-当前 MANUKA 形象使用自定义参数控制表情细节。
-- **Face_Cheek**: 脸红 (害羞、尴尬、心动) (Bool: true)。
-- **Face_Tear**: 流泪 (悲伤、感动、委屈) (Bool: true)。
-- **Face_Sweat**: 流汗 (紧张、尴尬、无语) (Bool: true)。
-- **Face_Heart_eye**: 爱心眼 (极度喜欢、发情) (Bool: true)。
-- **Face_Kirakira_eye**: 闪亮眼 (期待、兴奋、崇拜) (Bool: true)。
-- **neutral**: 恢复默认状态 (将上述 Bool 设为 false)。
+
 
 ## 2. 动作控制 (Actions)
 当前 MANUKA 形象通过 `Action_Int1` 触发动作。

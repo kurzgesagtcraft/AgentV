@@ -329,7 +329,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (contentElement) {
                 const contentClone = contentElement.cloneNode(true);
                 contentClone.querySelectorAll('.vcp-tool-use-bubble').forEach(el => el.remove());
-                textToSpeak = contentClone.innerText || '';
+                textToSpeak = (contentClone.innerText || '')
+                    .replace(/<<<DailyNoteStart>>>[\s\S]*?<<<DailyNoteEnd>>>/g, '');
             } else {
                 textToSpeak = messageElement.textContent || messageElement.innerText;
             }

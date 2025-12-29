@@ -302,7 +302,10 @@ function showContextMenu(event, messageItem, message) {
                             contentClone.querySelectorAll('.vcp-tool-result-bubble').forEach(el => el.remove());
                             // Now, get the innerText from the cleaned-up clone
                             // 修复：清理多余的空行，确保最多只有一个空行
-                            textToRead = (contentClone.innerText || '').replace(/\n{3,}/g, '\n\n').trim();
+                            textToRead = (contentClone.innerText || '')
+                                .replace(/<<<DailyNoteStart>>>[\s\S]*?<<<DailyNoteEnd>>>/g, '')
+                                .replace(/\n{3,}/g, '\n\n')
+                                .trim();
                         }
                         
                         if (textToRead.trim()) {

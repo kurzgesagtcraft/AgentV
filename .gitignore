@@ -200,3 +200,8 @@ DMOSpeech2/voices/
 *.pt
 *.bin
 *.model
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz

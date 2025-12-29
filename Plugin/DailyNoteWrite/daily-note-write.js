@@ -66,7 +66,7 @@ function sanitizePathComponent(name) {
  * @returns {Object} { hasTag: boolean, lastLine: string, contentWithoutLastLine: string }
  */
 function detectTagLine(content) {
-    const lines = content.split('\n');
+    const lines = content.trimEnd().split('\n');
     if (lines.length === 0) {
         return { hasTag: false, lastLine: '', contentWithoutLastLine: content };
     }

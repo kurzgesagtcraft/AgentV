@@ -950,8 +950,11 @@ export async function finalizeStreamedMessage(messageId, finishReason, context) 
         });
 
         if (finalFullText) {
-            // 过滤掉 ToolUSE 内容 (<<<[TOOL_REQUEST]>>> ... <<<[END_TOOL_REQUEST]>>>)
-            const ttsText = finalFullText.replace(/<<<\[TOOL_REQUEST\]>>>[\s\S]*?<<<\[END_TOOL_REQUEST\]>>>/g, '').trim();
+            // 过滤掉 ToolUSE 内容和日记内容
+            const ttsText = finalFullText
+                .replace(/<<<\[TOOL_REQUEST\]>>>[\s\S]*?<<<\[END_TOOL_REQUEST\]>>>/g, '')
+                .replace(/<<<DailyNoteStart>>>[\s\S]*?<<<DailyNoteEnd>>>/g, '')
+                .trim();
 
             if (ttsText) {
                 // **关键修复：在自动触发前，确保音频上下文已激活**

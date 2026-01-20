@@ -935,6 +935,12 @@ async function initialize() {
     await knowledgeBaseManager.initialize(); // 在加载插件之前启动，确保服务就绪
     console.log('向量数据库初始化完成。');
 
+    // 新增：创建向量搜索API路由
+    console.log('正在创建向量搜索API路由...');
+    const vectorSearchRoutes = require('./routes/vectorSearchRoutes')(knowledgeBaseManager, DEBUG_MODE);
+    app.use('/api', vectorSearchRoutes);
+    console.log('向量搜索API路由已挂载到 /api 路径。');
+
     pluginManager.setProjectBasePath(__dirname);
     pluginManager.setVectorDBManager(knowledgeBaseManager); // 注入 knowledgeBaseManager
     

@@ -77,7 +77,7 @@ async function _sendBatch(batchTexts, config, batchNumber) {
                 console.error(`[Embedding] 'data' field is not an array for Batch ${batchNumber}`);
                 console.error(`data type: ${typeof data.data}`);
                 console.error(`data value: ${JSON.stringify(data.data).substring(0, 200)}`);
-                throw new Error(`Invalid API response structure: 'data' is not an array`);
+                throw new Error(`Invalid API response结构: 'data' is not an array`);
             }
 
             if (data.data.length === 0) {
@@ -159,4 +159,23 @@ async function getEmbeddingsBatch(texts, config) {
     return results.filter(r => r).flat();
 }
 
-module.exports = { getEmbeddingsBatch };
+/**
+ * 获取单个文本的向量嵌入
+ * @param {string} text - 要向量化的文本
+ * @param {object} config - 配置对象 {apiKey, apiUrl, model}
+ * @returns {Promise<Array<number>>} 向量数组
+ */
+async function getSingleEmbedding(text, config) {
+    try {
+        const embeddings = await getEmbeddingsBatch([text], config);
+        if (embeddings && embeddings.length > 0) {
+            return embeddings[0];
+        }
+        throw new Error('获取向量嵌入失败：返回结果为空');
+    } catch (error) {
+        console.error(`[EmbeddingUtils] 获取单个向量嵌入失败:`, error.message);
+        throw error;
+    }
+}
+
+module.exports = { getEmbeddingsBatch, getSingleEmbedding };

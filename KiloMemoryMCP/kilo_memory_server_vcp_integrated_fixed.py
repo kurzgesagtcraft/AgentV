@@ -11,6 +11,9 @@ import datetime
 import hashlib
 import re
 import requests
+import subprocess
+import time
+import threading
 from typing import Any, Dict, List, Optional, Tuple, Set
 from dataclasses import dataclass, asdict
 from enum import Enum
@@ -77,7 +80,7 @@ class VCPAPIClient:
     def is_vcp_running(self) -> bool:
         """检查VCP服务器是否运行"""
         try:
-            response = self.session.get(f"{self.base_url}/health", timeout=5)
+            response = self.session.get(f"{self.base_url}/api/health", timeout=5)
             return response.status_code == 200
         except:
             return False
@@ -85,17 +88,59 @@ class VCPAPIClient:
     def search_knowledge(self, query: str, limit: int = 10) -> List[Dict]:
         """通过VCP API搜索知识库"""
         try:
-            # 这里应该调用VCP的搜索API
-            # 由于VCP API可能未完全定义，我们先模拟一个实现
-            return self._simulate_vcp_search(query, limit)
+            # 调用真正的VCP向量搜索API
+            return self._real_vcp_search(query, limit)
         except Exception as e:
             print(f"VCP搜索失败: {e}")
+            # 回退到模拟搜索
+            return self._simulate_vcp_search(query, limit)
+    
+    def _real_vcp_search(self, query: str, limit: int) -> List[Dict]:
+        """真正的VCP向量搜索"""
+        try:
+            # 调用向量搜索API
+            response = self.session.post(
+                f"{self.base_url}/api/search",
+                json={
+                    "query": query,
+                    "limit": limit,
+                    "tagBoost": 0.5,  # 使用TagMemo增强
+                    "minScore": 0.3,  # 最小相似度分数
+                    "includeTags": True
+                },
+                timeout=VCP_API_TIMEOUT
+            )
+            
+            if response.status_code != 200:
+                print(f"VCP API返回错误: {response.status_code}")
+                return []
+            
+            data = response.json()
+            if not data.get("success", False):
+                print(f"VCP API返回失败: {data.get('error', '未知错误')}")
+                return []
+            
+            results = []
+            for item in data.get("results", []):
+                results.append({
+                    "text": item.get("text", ""),
+                    "sourceFile": item.get("sourceFile", ""),
+                    "score": item.get("score", 0.0),
+                    "diary_name": item.get("sourceFile", "").split("/")[-2] if "/" in item.get("sourceFile", "") else "VCP知识库",
+                    "matchedTags": item.get("matchedTags", []),
+                    "boostFactor": item.get("boostFactor", 0),
+                    "tagMatchScore": item.get("tagMatchScore", 0),
+                    "tagMatchCount": item.get("tagMatchCount", 0)
+                })
+            
+            return results
+            
+        except Exception as e:
+            print(f"调用VCP向量搜索API失败: {e}")
             return []
     
     def _simulate_vcp_search(self, query: str, limit: int) -> List[Dict]:
-        """模拟VCP搜索（实际应该调用真正的VCP API）"""
-        # 这里应该调用真正的VCP API
-        # 暂时使用SQLite数据库作为回退
+        """模拟VCP搜索（回退方案）"""
         try:
             conn = sqlite3.connect(DB_PATH)
             conn.row_factory = sqlite3.Row
@@ -125,9 +170,63 @@ class VCPAPIClient:
             print(f"模拟VCP搜索失败: {e}")
             return []
     
+    def trigger_vcp_recall(self, context: str, max_memories: int = 5) -> Dict:
+        """触发主动回忆"""
+        try:
+            response = self.session.post(
+                f"{self.base_url}/api/recall/trigger",
+                json={
+                    "context": context,
+                    "maxMemories": max_memories,
+                    "relevanceThreshold": 0.3
+                },
+                timeout=VCP_API_TIMEOUT
+            )
+            
+            if response.status_code != 200:
+                print(f"主动回忆API返回错误: {response.status_code}")
+                return {"success": False, "error": f"API错误: {response.status_code}"}
+            
+            data = response.json()
+            if not data.get("success", False):
+                return {"success": False, "error": data.get("error", "未知错误")}
+            
+            return {
+                "success": True,
+                "context": context,
+                "memories": data.get("memories", []),
+                "summary": data.get("summary", ""),
+                "stats": data.get("stats", {})
+            }
+            
+        except Exception as e:
+            print(f"触发主动回忆失败: {e}")
+            return {"success": False, "error": str(e)}
+    
     def get_semantic_expansion(self, query: str) -> List[str]:
         """获取语义扩展查询词"""
-        # 基于常见概念的语义扩展
+        try:
+            # 尝试调用VCP的标签搜索API
+            response = self.session.post(
+                f"{self.base_url}/api/search/tags",
+                json={"query": query, "limit": 5},
+                timeout=VCP_API_TIMEOUT
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("success", False):
+                    expansions = [query]
+                    for tag_result in data.get("results", []):
+                        tag = tag_result.get("tag", "")
+                        if tag and tag not in expansions:
+                            expansions.append(tag)
+                            expansions.append(f"{query} {tag}")
+                    return expansions[:5]
+        except:
+            pass
+        
+        # 回退到基于常见概念的语义扩展
         expansions = [query]
         
         hardware_concepts = {
@@ -148,6 +247,101 @@ class VCPAPIClient:
                     expansions.append(f"{query} {synonym}")
         
         return list(set(expansions))[:5]
+    
+    def start_vcp_service(self) -> bool:
+        """启动VCP服务"""
+        try:
+            print("🚀 正在尝试启动VCP服务...")
+            
+            # 检查VCP服务器是否已经在运行
+            if self.is_vcp_running():
+                print("✅ VCP服务已经在运行")
+                return True
+            
+            # 查找VCP服务器启动脚本
+            vcp_server_paths = [
+                os.path.join(PROJECT_ROOT, "server.js"),
+                os.path.join(PROJECT_ROOT, "start_server.bat"),
+                os.path.join(PROJECT_ROOT, "start_all_services.bat")
+            ]
+            
+            server_script = None
+            for path in vcp_server_paths:
+                if os.path.exists(path):
+                    server_script = path
+                    break
+            
+            if not server_script:
+                print("❌ 未找到VCP服务器启动脚本")
+                return False
+            
+            print(f"📁 找到VCP服务器脚本: {server_script}")
+            
+            # 根据脚本类型启动服务
+            if server_script.endswith(".js"):
+                # Node.js服务器
+                cmd = ["node", server_script]
+            elif server_script.endswith(".bat"):
+                # Windows批处理脚本
+                cmd = [server_script]
+            else:
+                print(f"❌ 不支持的脚本类型: {server_script}")
+                return False
+            
+            # 在后台启动服务
+            try:
+                # 使用subprocess启动服务
+                if sys.platform == "win32":
+                    # Windows: 使用CREATE_NEW_CONSOLE创建新控制台
+                    process = subprocess.Popen(
+                        cmd,
+                        cwd=PROJECT_ROOT,
+                        creationflags=subprocess.CREATE_NEW_CONSOLE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        encoding='utf-8'
+                    )
+                else:
+                    # Linux/Mac: 使用nohup在后台运行
+                    process = subprocess.Popen(
+                        cmd,
+                        cwd=PROJECT_ROOT,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        encoding='utf-8'
+                    )
+                
+                print(f"✅ VCP服务启动中 (PID: {process.pid})...")
+                
+                # 等待服务启动
+                for i in range(30):  # 最多等待30秒
+                    time.sleep(1)
+                    if self.is_vcp_running():
+                        print("✅ VCP服务启动成功！")
+                        return True
+                    if i % 5 == 0:
+                        print(f"⏳ 等待VCP服务启动... ({i+1}/30秒)")
+                
+                print("⚠️ VCP服务启动超时，可能仍在启动中")
+                return False
+                
+            except Exception as e:
+                print(f"❌ 启动VCP服务失败: {e}")
+                return False
+                
+        except Exception as e:
+            print(f"❌ 启动VCP服务时发生错误: {e}")
+            return False
+    
+    def ensure_vcp_service(self) -> bool:
+        """确保VCP服务运行，如果未运行则自动启动"""
+        if self.is_vcp_running():
+            return True
+        
+        print("🔧 VCP服务未运行，尝试自动启动...")
+        return self.start_vcp_service()
 
 # 记忆分析器
 class MemoryAnalyzer:
@@ -589,6 +783,73 @@ def get_memory_stats() -> str:
     
     return response
 
+@mcp.tool()
+def trigger_vcp_recall(context: str, max_memories: int = 5) -> str:
+    """
+    触发VCP主动回忆功能，在任务开始时自动回忆相关记忆。
+    
+    💡 使用场景：
+    1. 在开始新任务时调用此工具，自动回忆相关经验
+    2. 在遇到问题时调用，寻找类似问题的解决方案
+    3. 在决策时调用，获取历史决策依据
+    
+    :param context: 当前任务或对话上下文
+    :param max_memories: 最大回忆数量（默认5）
+    """
+    try:
+        vcp_client = VCPAPIClient()
+        result = vcp_client.trigger_vcp_recall(context, max_memories)
+        
+        if not result.get("success", False):
+            return f"❌ 主动回忆失败: {result.get('error', '未知错误')}"
+        
+        memories = result.get("memories", [])
+        summary = result.get("summary", "")
+        stats = result.get("stats", {})
+        
+        if not memories:
+            return f"🔍 基于当前上下文，没有找到相关的历史记忆。\n\n上下文: {context[:100]}..."
+        
+        response = f"🧠 VCP主动回忆结果（基于上下文）\n\n"
+        response += f"📋 上下文: {context[:150]}...\n\n"
+        response += f"📊 统计: 找到 {stats.get('relevantFound', 0)} 个相关记忆（共搜索 {stats.get('totalFound', 0)} 个）\n\n"
+        response += f"📝 回忆总结: {summary}\n\n"
+        response += "🔍 相关记忆:\n\n"
+        
+        for i, memory in enumerate(memories, 1):
+            score = memory.get("score", 0)
+            relevance = memory.get("relevance", "unknown")
+            source = memory.get("source", "VCP知识库")
+            text = memory.get("text", "")[:200] + "..." if len(memory.get("text", "")) > 200 else memory.get("text", "")
+            
+            relevance_icons = {
+                "high": "🔥",
+                "medium": "⭐",
+                "low": "📝",
+                "very_low": "📄"
+            }
+            relevance_icon = relevance_icons.get(relevance, "📄")
+            
+            response += f"{i}. {relevance_icon} 相关性: {relevance} (分数: {score:.3f})\n"
+            response += f"   来源: {source}\n"
+            response += f"   内容: {text}\n"
+            
+            matched_tags = memory.get("matchedTags", [])
+            if matched_tags:
+                response += f"   匹配标签: {', '.join(matched_tags[:3])}\n"
+            
+            response += "\n"
+        
+        response += "💡 使用建议:\n"
+        response += "1. 这些记忆可以帮助您更好地理解当前任务\n"
+        response += "2. 参考历史经验可以避免重复错误\n"
+        response += "3. 使用 store_kilo_memory 存储新的重要发现\n"
+        
+        return response
+        
+    except Exception as e:
+        return f"❌ 触发主动回忆时发生错误: {str(e)}"
+
 # 主函数
 if __name__ == "__main__":
     print("=" * 60)
@@ -600,14 +861,28 @@ if __name__ == "__main__":
     print("3. ✅ 主动回忆：trigger_vcp_recall工具实现'一次回忆起'")
     print("4. ✅ 质量评估：多维度的记忆质量评分")
     print("5. ✅ 系统统计：实时监控记忆系统状态")
+    print("6. ✅ 自动启动：打开MCP时自动启动VCP服务")
     print("=" * 60)
     
-    # 检查VCP连接
+    # 检查并确保VCP服务运行
     vcp_client = VCPAPIClient()
+    print("🔍 检查VCP服务状态...")
+    
     if vcp_client.is_vcp_running():
         print("✅ VCP服务器连接正常")
     else:
-        print("⚠️ VCP服务器未运行，将使用回退搜索")
+        print("⚠️ VCP服务器未运行，尝试自动启动...")
+        
+        # 尝试自动启动VCP服务
+        if vcp_client.ensure_vcp_service():
+            print("✅ VCP服务自动启动成功！")
+        else:
+            print("❌ VCP服务自动启动失败，将使用回退搜索")
+            print("💡 提示：您可以手动启动VCP服务：")
+            print(f"   1. 打开终端，切换到: {PROJECT_ROOT}")
+            print("   2. 运行: node server.js")
+            print("   3. 或运行: start_server.bat")
     
     # 运行 MCP 服务器
+    print("\n🚀 启动KiloMemoryMCP服务器...")
     mcp.run()

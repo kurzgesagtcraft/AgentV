@@ -465,6 +465,11 @@ def query_kilo_memory(query: str = "", limit: int = 10,
     查询 Kilo Code 的记忆（VCP集成版）。
     使用VCP API进行语义搜索，支持质量过滤和记忆类型识别。
     
+    💡 使用建议：
+    1. 在会话开始时调用此工具进行"主动回忆"，例如：query_kilo_memory("电脑硬件配置")
+    2. 使用空查询查看最近的记忆：query_kilo_memory("", limit=10)
+    3. 结合具体任务查询相关经验：query_kilo_memory("编程问题解决", limit=5)
+    
     :param query: 查询关键词
     :param limit: 返回数量限制
     :param min_quality: 最低质量评分（0-1）
@@ -521,52 +526,36 @@ def query_kilo_memory(query: str = "", limit: int = 10,
     
     return response
 
-@mcp.tool()
-def trigger_vcp_recall(user_message: str = "", system_context: str = "") -> str:
-    """
-    触发VCP主动回忆 - 在任务开始时自动调用
-    
-    这是实现"一次回忆起"、"主动回忆起"的核心工具。
-    当Kilo Code开始新任务时，自动调用此工具来检索相关记忆。
-    
-    :param user_message: 用户的消息/任务描述
-    :param system_context: 系统上下文信息
-    :return: 自然集成的回忆结果或空字符串（如果不需回忆）
-    """
-    if not user_message:
-        return ""
-    
-    # 分析用户消息，提取关键词
-    keywords = extract_keywords(user_message)
-    if not keywords:
-        return ""
-    
-    # 使用关键词查询记忆
-    query = " ".join(keywords[:3])
-    results = memory_manager.query_memories(query, limit=3, min_quality=0.3)
-    
-    if not results or ("error" in results[0]):
-        return ""
-    
-    # 构建自然响应
-    response = "💭 基于您的任务描述，回忆起以下相关经验：\n\n"
-    
-    for i, mem in enumerate(results[:2], 1):
-        content = mem.get("content", "")
-        if len(content) > 150:
-            content = content[:150] + "..."
-        
-        response += f"{i}. {content}\n\n"
-    
-    response += "这些经验可能对您当前的任务有所帮助。"
-    return response
+
 
 def extract_keywords(text: str) -> List[str]:
     """从文本中提取关键词"""
-    # 简单的关键词提取
-    stopwords = {'的', '了', '在', '是', '我', '有', '和', '就', '不', '人', '都', '一', '一个', '上', '也', '很', '到', '说', '要', '去', '你', '会', '着', '没有', '看', '好', '自己', '这'}
-    words = re.findall(r'[\u4e00-\u9fa5]+|[A-Za-z]+', text)
-    return [w for w in words if w not in stopwords][:5]
+    # 改进的关键词提取：使用简单的分词逻辑
+    stopwords = {'的', '了', '在', '是', '我', '有', '和', '就', '不', '人', '都', '一', '一个', '上', '也', '很', '到', '说', '要', '去', '你', '会', '着', '没有', '看', '好', '自己', '这', '我', '你', '他', '她', '它', '们', '这', '那', '哪', '什么', '怎么', '为什么', '如何'}
+    
+    # 常见硬件相关关键词
+    hardware_keywords = {'电脑', '硬件', '环境', '配置', '系统', '处理器', 'CPU', '显卡', 'GPU', '内存', '存储', '硬盘', '固态', 'SSD', '机械', 'HDD', '主板', '电源', '散热', '显示器', '屏幕', '键盘', '鼠标', '网络', '无线', '蓝牙', 'USB', '接口', '端口'}
+    
+    # 提取2-4个字符的词语
+    keywords = []
+    for i in range(len(text)):
+        for length in [2, 3, 4]:
+            if i + length <= len(text):
+                word = text[i:i+length]
+                if word not in stopwords and any(char not in stopwords for char in word):
+                    # 检查是否包含硬件相关关键词
+                    if any(hw in word for hw in hardware_keywords):
+                        keywords.append(word)
+    
+    # 去重并限制数量
+    keywords = list(set(keywords))[:5]
+    
+    # 如果没提取到关键词，返回整个文本（去除停用词）
+    if not keywords:
+        simple_words = [char for char in text if char not in stopwords]
+        keywords = simple_words[:5]
+    
+    return keywords
 
 @mcp.tool()
 def list_all_kilo_memories(limit: int = 20) -> str:

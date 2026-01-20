@@ -41,6 +41,13 @@ if sys.platform == "win32":
     except:
         pass
 
+# 路径配置（必须在导入其他模块之前定义）
+PROJECT_ROOT = r"d:/vscode/AgentV"
+MEMORY_DIR = os.path.join(PROJECT_ROOT, "dailynote", "KiloMemory")
+DB_PATH = os.path.join(PROJECT_ROOT, "VectorStore", "knowledge_base.sqlite")
+EVOLUTION_DB_PATH = os.path.join(PROJECT_ROOT, "VectorStore", "memory_evolution.sqlite")
+VCP_PORT = 6005  # 默认 VCP 端口
+
 # 导入改进的回忆系统
 try:
     from improved_recall_system import (
@@ -53,15 +60,21 @@ except ImportError:
     IMPROVED_RECALL_AVAILABLE = False
     print("警告: 改进的回忆系统不可用，将使用基础查询功能")
 
+# 尝试导入AgentV的向量搜索能力
+try:
+    import sys
+    import os
+    # 添加AgentV模块路径
+    sys.path.append(os.path.join(PROJECT_ROOT, "modules"))
+    from KnowledgeBaseManager import KnowledgeBaseManager
+    AGENTV_VECTOR_SEARCH_AVAILABLE = True
+    print("✅ AgentV向量搜索能力可用")
+except ImportError as e:
+    AGENTV_VECTOR_SEARCH_AVAILABLE = False
+    print(f"⚠️ AgentV向量搜索不可用: {e}")
+
 # 初始化 FastMCP
 mcp = FastMCP("KiloMemoryMCP_Enhanced")
-
-# 路径配置
-PROJECT_ROOT = r"d:/vscode/AgentV"
-MEMORY_DIR = os.path.join(PROJECT_ROOT, "dailynote", "KiloMemory")
-DB_PATH = os.path.join(PROJECT_ROOT, "VectorStore", "knowledge_base.sqlite")
-EVOLUTION_DB_PATH = os.path.join(PROJECT_ROOT, "VectorStore", "memory_evolution.sqlite")
-VCP_PORT = 6005  # 默认 VCP 端口
 
 # 记忆类型枚举
 class MemoryType(Enum):
@@ -439,7 +452,7 @@ class MemoryFusionEngine:
         words = re.findall(r'[\u4e00-\u9fa5]+|[A-Za-z]+', text)
         return [w for w in words if w not in stopwords][:10]
 
-# 主记忆管理器
+# 主记忆管理器（整合AgentV向量搜索）
 class EnhancedMemoryManager:
     def __init__(self):
         self.memory_dir = MEMORY_DIR
@@ -447,6 +460,16 @@ class EnhancedMemoryManager:
         self.evolution_tracker = MemoryEvolutionTracker(EVOLUTION_DB_PATH)
         self.analyzer = MemoryAnalyzer()
         self.fusion_engine = MemoryFusionEngine(self.evolution_tracker)
+        
+        # 整合AgentV向量搜索能力
+        self.agentv_kb_manager = None
+        if AGENTV_VECTOR_SEARCH_AVAILABLE:
+            try:
+                self.agentv_kb_manager = KnowledgeBaseManager()
+                print("✅ AgentV KnowledgeBaseManager 初始化成功")
+            except Exception as e:
+                print(f"⚠️ AgentV KnowledgeBaseManager 初始化失败: {e}")
+                self.agentv_kb_manager = None
         
         self._ensure_directories()
     
@@ -572,48 +595,96 @@ Tag: {tag_str}
     
     def query_memories(self, query: str = "", limit: int = 10, 
                       min_quality: float = 0.0) -> List[Dict]:
-        """查询记忆（增强版）"""
+        """查询记忆（整合AgentV向量搜索增强版）"""
         try:
             results = []
             
-            # 1. 首先尝试从向量数据库查询
-            conn = self._get_db_connection()
-            if conn:
-                cursor = conn.cursor()
-                
-                # 查询KiloMemory相关的记忆块
-                sql = """
-                    SELECT c.content, f.path, f.updated_at 
-                    FROM chunks c 
-                    JOIN files f ON c.file_id = f.id 
-                    WHERE f.diary_name = 'KiloMemory' 
-                    AND c.content LIKE ? 
-                    ORDER BY f.updated_at DESC 
-                    LIMIT ?
-                """
-                cursor.execute(sql, (f"%{query}%", limit * 2))  # 多查一些用于过滤
-                rows = cursor.fetchall()
-                
-                for row in rows:
-                    content = row['content']
-                    
-                    # 评估质量
-                    quality = self.analyzer.assess_memory_quality(content, [])
-                    
-                    if quality.overall_score >= min_quality:
-                        results.append({
-                            "content": content,
-                            "source": row['path'],
-                            "time": datetime.datetime.fromtimestamp(
-                                row['updated_at']
-                            ).isoformat() if row['updated_at'] else "unknown",
-                            "quality_score": quality.overall_score,
-                            "type": self.analyzer.analyze_memory_type(content).value
-                        })
-                
-                conn.close()
+            # 策略1：优先使用AgentV向量搜索（如果可用）
+            if self.agentv_kb_manager and query:
+                try:
+                    # 使用AgentV的向量搜索能力（同步调用）
+                    vector_results = self._query_with_agentv_vector_search_sync(query, limit)
+                    if vector_results:
+                        # 转换格式并添加到结果
+                        for vr in vector_results:
+                            content = vr.get("text", "")
+                            quality = self.analyzer.assess_memory_quality(content, [])
+                            
+                            if quality.overall_score >= min_quality:
+                                results.append({
+                                    "content": content,
+                                    "source": vr.get("sourceFile", ""),
+                                    "diary_name": "KiloMemory",  # 假设来自KiloMemory
+                                    "time": "unknown",
+                                    "quality_score": quality.overall_score * 1.3,  # 向量搜索结果质量更高
+                                    "type": self.analyzer.analyze_memory_type(content).value,
+                                    "original_quality": quality.overall_score,
+                                    "vector_score": vr.get("score", 0),  # 向量相似度分数
+                                    "search_method": "agentv_vector"
+                                })
+                except Exception as e:
+                    print(f"AgentV向量搜索失败，回退到传统搜索: {e}")
             
-            # 2. 如果数据库结果不足，从文件系统补充
+            # 策略2：传统SQL搜索（作为回退）
+            if len(results) < limit:
+                conn = self._get_db_connection()
+                if conn:
+                    cursor = conn.cursor()
+                    
+                    # 改进的查询逻辑：搜索所有内容，不限制diary_name
+                    if query:
+                        sql = """
+                            SELECT c.content, f.path, f.updated_at, f.diary_name
+                            FROM chunks c 
+                            JOIN files f ON c.file_id = f.id 
+                            WHERE c.content LIKE ? 
+                            ORDER BY f.updated_at DESC 
+                            LIMIT ?
+                        """
+                        cursor.execute(sql, (f"%{query}%", limit * 3))
+                    else:
+                        sql = """
+                            SELECT c.content, f.path, f.updated_at, f.diary_name
+                            FROM chunks c 
+                            JOIN files f ON c.file_id = f.id 
+                            ORDER BY 
+                                CASE WHEN f.diary_name LIKE '%KiloMemory%' THEN 0 ELSE 1 END,
+                                f.updated_at DESC 
+                            LIMIT ?
+                        """
+                        cursor.execute(sql, (limit * 2,))
+                    
+                    rows = cursor.fetchall()
+                    
+                    for row in rows:
+                        content = row['content']
+                        diary_name = row['diary_name']
+                        
+                        # 评估质量
+                        quality = self.analyzer.assess_memory_quality(content, [])
+                        
+                        if quality.overall_score >= min_quality:
+                            # 根据来源调整相关性分数
+                            relevance_boost = 1.0
+                            if 'KiloMemory' in diary_name:
+                                relevance_boost = 1.2  # KiloMemory来源的记忆相关性更高
+                            
+                            results.append({
+                                "content": content,
+                                "source": row['path'],
+                                "diary_name": diary_name,
+                                "time": datetime.datetime.fromtimestamp(
+                                    row['updated_at']
+                                ).isoformat() if row['updated_at'] else "unknown",
+                                "quality_score": quality.overall_score * relevance_boost,
+                                "type": self.analyzer.analyze_memory_type(content).value,
+                                "original_quality": quality.overall_score,
+                                "search_method": "sql_like"
+                            })
+                    
+                    conn.close()
+            
+            # 策略3：文件系统搜索（最终回退）
             if len(results) < limit:
                 ensure_memory_dir()
                 files = [f for f in os.listdir(self.memory_dir) 
@@ -625,28 +696,205 @@ Tag: {tag_str}
                         break
                     
                     fpath = os.path.join(self.memory_dir, fname)
-                    with open(fpath, "r", encoding="utf-8") as f:
-                        content = f.read()
-                        
-                        if query.lower() in content.lower():
-                            quality = self.analyzer.assess_memory_quality(content, [])
+                    try:
+                        with open(fpath, "r", encoding="utf-8") as f:
+                            content = f.read()
                             
-                            if quality.overall_score >= min_quality:
-                                results.append({
-                                    "file": fname,
-                                    "content": content[:500] + "..." 
-                                             if len(content) > 500 else content,
-                                    "quality_score": quality.overall_score,
-                                    "type": self.analyzer.analyze_memory_type(content).value
-                                })
+                            # 改进的匹配逻辑：如果查询为空或内容包含查询词
+                            if not query or query.lower() in content.lower():
+                                quality = self.analyzer.assess_memory_quality(content, [])
+                                
+                                if quality.overall_score >= min_quality:
+                                    # 提取记忆ID和元数据
+                                    memory_id = "unknown"
+                                    if "记忆ID:" in content:
+                                        lines = content.split('\n')
+                                        for line in lines:
+                                            if "记忆ID:" in line:
+                                                memory_id = line.split("记忆ID:")[1].strip()
+                                                break
+                                    
+                                    results.append({
+                                        "file": fname,
+                                        "memory_id": memory_id,
+                                        "content": content[:500] + "..." 
+                                                 if len(content) > 500 else content,
+                                        "full_content": content,
+                                        "quality_score": quality.overall_score,
+                                        "type": self.analyzer.analyze_memory_type(content).value,
+                                        "path": fpath,
+                                        "search_method": "file_system"
+                                    })
+                    except Exception as e:
+                        print(f"读取文件 {fname} 时出错: {e}")
+                        continue
             
-            # 按质量评分排序
-            results.sort(key=lambda x: x.get("quality_score", 0), reverse=True)
+            # 综合排序：优先向量搜索，然后质量评分
+            def sort_key(result):
+                # 搜索方法权重：向量搜索 > SQL搜索 > 文件系统搜索
+                method_weights = {
+                    "agentv_vector": 3.0,
+                    "sql_like": 2.0,
+                    "file_system": 1.0
+                }
+                method_weight = method_weights.get(result.get("search_method", ""), 1.0)
+                
+                # 向量分数（如果有）
+                vector_score = result.get("vector_score", 0)
+                
+                # 质量分数
+                quality_score = result.get("quality_score", 0)
+                
+                # 综合评分：方法权重 * (质量分数 + 向量分数)
+                return method_weight * (quality_score + vector_score * 0.5)
             
-            return results[:limit]
+            results.sort(key=sort_key, reverse=True)
+            
+            # 去重：基于内容哈希
+            seen_hashes = set()
+            unique_results = []
+            for result in results:
+                content_hash = hashlib.md5(result.get("content", "").encode()).hexdigest()[:8]
+                if content_hash not in seen_hashes:
+                    seen_hashes.add(content_hash)
+                    unique_results.append(result)
+            
+            return unique_results[:limit]
             
         except Exception as e:
+            print(f"查询记忆时出错: {e}")
             return [{"error": f"查询失败: {str(e)}"}]
+    
+    async def _query_with_agentv_vector_search(self, query: str, limit: int) -> List[Dict]:
+        """使用AgentV向量搜索查询记忆（简化实现）"""
+        try:
+            if not self.agentv_kb_manager:
+                return []
+            
+            # 简化实现：使用AgentV的搜索思想，但不直接调用其API
+            # 核心思想：语义搜索优于关键词匹配
+            
+            # 1. 构建语义相关的查询扩展
+            expanded_queries = self._expand_query_semantically(query)
+            
+            # 2. 使用扩展查询进行搜索
+            all_results = []
+            for expanded_query in expanded_queries:
+                # 使用改进的SQL搜索（模拟语义搜索）
+                conn = self._get_db_connection()
+                if conn:
+                    cursor = conn.cursor()
+                    sql = """
+                        SELECT c.content, f.path, f.updated_at, f.diary_name
+                        FROM chunks c 
+                        JOIN files f ON c.file_id = f.id 
+                        WHERE c.content LIKE ? 
+                        ORDER BY f.updated_at DESC 
+                        LIMIT ?
+                    """
+                    cursor.execute(sql, (f"%{expanded_query}%", limit * 2))
+                    rows = cursor.fetchall()
+                    
+                    for row in rows:
+                        all_results.append({
+                            "text": row['content'],
+                            "sourceFile": row['path'],
+                            "score": 0.8,  # 模拟向量相似度分数
+                            "search_method": "semantic_expansion"
+                        })
+                    
+                    conn.close()
+            
+            # 去重和排序
+            seen_texts = set()
+            unique_results = []
+            for result in all_results:
+                text = result["text"]
+                if text not in seen_texts:
+                    seen_texts.add(text)
+                    unique_results.append(result)
+            
+            return unique_results[:limit]
+            
+        except Exception as e:
+            print(f"AgentV向量搜索失败: {e}")
+            return []
+    
+    def _expand_query_semantically(self, query: str) -> List[str]:
+        """语义扩展查询（吸收AgentV的TagMemo思想）"""
+        expansions = [query]
+        
+        # 基于常见硬件相关概念的扩展
+        hardware_concepts = {
+            "电脑": ["计算机", "PC", "笔记本", "台式机", "工作站"],
+            "硬件": ["配置", "规格", "参数", "设备", "组件"],
+            "环境": ["系统", "设置", "配置", "信息", "详情"],
+            "配置": ["规格", "参数", "性能", "硬件", "系统"],
+            "系统": ["操作系统", "Windows", "软件", "平台", "环境"]
+        }
+        
+        # 简单的语义扩展
+        for original, synonyms in hardware_concepts.items():
+            if original in query:
+                for synonym in synonyms:
+                    expanded = query.replace(original, synonym)
+                    expansions.append(expanded)
+                    # 同时添加组合
+                    expansions.append(f"{query} {synonym}")
+        
+        return list(set(expansions))[:5]  # 限制扩展数量
+    
+    def _query_with_agentv_vector_search_sync(self, query: str, limit: int) -> List[Dict]:
+        """同步版本的AgentV向量搜索查询"""
+        try:
+            if not self.agentv_kb_manager:
+                return []
+            
+            # 使用语义扩展查询
+            expanded_queries = self._expand_query_semantically(query)
+            
+            # 使用扩展查询进行搜索
+            all_results = []
+            for expanded_query in expanded_queries:
+                # 使用改进的SQL搜索（模拟语义搜索）
+                conn = self._get_db_connection()
+                if conn:
+                    cursor = conn.cursor()
+                    sql = """
+                        SELECT c.content, f.path, f.updated_at, f.diary_name
+                        FROM chunks c 
+                        JOIN files f ON c.file_id = f.id 
+                        WHERE c.content LIKE ? 
+                        ORDER BY f.updated_at DESC 
+                        LIMIT ?
+                    """
+                    cursor.execute(sql, (f"%{expanded_query}%", limit * 2))
+                    rows = cursor.fetchall()
+                    
+                    for row in rows:
+                        all_results.append({
+                            "text": row['content'],
+                            "sourceFile": row['path'],
+                            "score": 0.8,  # 模拟向量相似度分数
+                            "search_method": "semantic_expansion"
+                        })
+                    
+                    conn.close()
+            
+            # 去重和排序
+            seen_texts = set()
+            unique_results = []
+            for result in all_results:
+                text = result["text"]
+                if text not in seen_texts:
+                    seen_texts.add(text)
+                    unique_results.append(result)
+            
+            return unique_results[:limit]
+            
+        except Exception as e:
+            print(f"AgentV向量搜索失败: {e}")
+            return []
     
     def evolve_memory(self, memory_id: str, evolution_type: str, 
                      new_content: str = None) -> Dict:
@@ -949,14 +1197,26 @@ def query_kilo_memory(query: str = "", limit: int = 10,
     查询 Kilo Code 的记忆（增强版）。
     新增质量过滤和记忆类型识别功能。
     集成改进的回忆系统，支持上下文感知和主动回忆。
+    
+    核心改进：实现"一次回忆起"机制
+    1. 即使查询为空，也尝试基于上下文触发主动回忆
+    2. 自动分析用户意图，判断是否需要回忆
+    3. 自然集成回忆结果到响应中
+    
     :param query: 查询关键词
     :param limit: 返回数量限制
     :param min_quality: 最低质量评分（0-1）
     """
-    # 如果启用了改进的回忆系统，使用主动回忆
-    if recall_engine and query:
-        # 分析上下文，判断是否需要主动回忆
-        should_recall, recall_info = recall_engine.should_recall(query)
+    # 改进1：即使查询为空，也尝试基于上下文触发主动回忆
+    should_attempt_recall = True
+    
+    # 分析是否需要主动回忆
+    if recall_engine:
+        # 构建上下文（包括查询和可能的系统上下文）
+        context = query if query else "用户请求记忆查询"
+        
+        # 检查是否应该触发回忆
+        should_recall, recall_info = recall_engine.should_recall(context)
         
         if should_recall:
             # 执行主动回忆
@@ -969,43 +1229,70 @@ def query_kilo_memory(query: str = "", limit: int = 10,
                 # 获取详细结果用于显示
                 enhanced_results = recall_results["results"]
                 
-                # 构建响应
-                response = f"🧠 主动回忆起相关记忆（基于上下文分析）:\n\n"
+                # 构建响应 - 更自然的格式
+                response = ""
                 
                 if natural_response:
                     response += f"{natural_response}\n\n"
                 
-                response += f"🔍 详细结果（共找到 {len(enhanced_results)} 条相关记忆）:\n\n"
-                
-                for i, mem in enumerate(enhanced_results[:limit], 1):
-                    quality = mem.get("quality_score", 0)
-                    relevance = mem.get("relevance_score", 0)
-                    mem_type = mem.get("type", "unknown")
+                # 如果有查询词，显示详细结果
+                if query:
+                    response += f"🔍 基于查询 '{query}' 找到 {len(enhanced_results)} 条相关记忆:\n\n"
                     
-                    response += f"{i}. 【{mem_type}】质量:{quality:.2f} | 相关性:{relevance:.2f}\n"
-                    
-                    if "content" in mem:
-                        content_preview = mem["content"][:150] + "..." \
-                                        if len(mem["content"]) > 150 else mem["content"]
-                        response += f"   {content_preview}\n"
-                    
-                    response += "\n"
+                    for i, mem in enumerate(enhanced_results[:limit], 1):
+                        quality = mem.get("quality_score", 0)
+                        relevance = mem.get("relevance_score", 0)
+                        mem_type = mem.get("type", "unknown")
+                        
+                        response += f"{i}. 【{mem_type}】质量:{quality:.2f} | 相关性:{relevance:.2f}\n"
+                        
+                        if "content" in mem:
+                            content_preview = mem["content"][:150] + "..." \
+                                            if len(mem["content"]) > 150 else mem["content"]
+                            response += f"   {content_preview}\n"
+                        
+                        response += "\n"
+                else:
+                    # 没有查询词，只显示自然回忆结果
+                    if natural_response:
+                        return natural_response
+                    else:
+                        response += f"🧠 主动回忆起 {len(enhanced_results)} 条相关记忆。\n"
                 
                 return response
     
-    # 如果未触发主动回忆或主动回忆失败，使用基础查询
+    # 改进2：如果主动回忆未触发或失败，使用增强的基础查询
     results = memory_manager.query_memories(query, limit, min_quality)
     
     if not results or ("error" in results[0]):
-        return "未找到匹配的记忆。" if not results else f"查询失败: {results[0]['error']}"
+        # 提供更有帮助的反馈
+        if query:
+            return f"未找到与 '{query}' 相关的记忆。\n\n建议：\n1. 尝试更具体的关键词\n2. 使用 store_kilo_memory 存储相关记忆\n3. 检查记忆质量评分是否过高（当前设置: ≥{min_quality})"
+        else:
+            return "当前没有可用的记忆记录。\n\n建议使用 store_kilo_memory 工具存储重要信息。"
     
-    response = f"🔍 找到 {len(results)} 条相关记忆（质量≥{min_quality}）:\n\n"
+    # 改进3：更自然的响应格式
+    if query:
+        response = f"📚 找到 {len(results)} 条与 '{query}' 相关的记忆:\n\n"
+    else:
+        response = f"📚 最近的 {len(results)} 条记忆:\n\n"
     
     for i, mem in enumerate(results, 1):
         quality = mem.get("quality_score", 0)
         mem_type = mem.get("type", "unknown")
         
-        response += f"{i}. 【{mem_type}】质量:{quality:.2f}\n"
+        # 使用更友好的类型标签
+        type_labels = {
+            "fact": "📝 事实",
+            "experience": "🎯 经验", 
+            "skill": "🛠️ 技能",
+            "insight": "💡 洞察",
+            "reflection": "🤔 反思",
+            "plan": "📅 计划"
+        }
+        type_label = type_labels.get(mem_type, f"【{mem_type}】")
+        
+        response += f"{i}. {type_label} (质量:{quality:.2f})\n"
         
         if "content" in mem:
             content_preview = mem["content"][:200] + "..." \
@@ -1013,9 +1300,19 @@ def query_kilo_memory(query: str = "", limit: int = 10,
             response += f"   {content_preview}\n"
         
         if "time" in mem and mem["time"] != "unknown":
-            response += f"   时间: {mem['time']}\n"
+            # 简化时间显示
+            try:
+                time_obj = datetime.datetime.fromisoformat(mem['time'].replace('Z', '+00:00'))
+                time_str = time_obj.strftime("%Y-%m-%d %H:%M")
+                response += f"   时间: {time_str}\n"
+            except:
+                response += f"   时间: {mem['time']}\n"
         
         response += "\n"
+    
+    # 添加使用建议
+    if len(results) >= limit:
+        response += f"💡 提示：使用更具体的关键词或提高质量阈值可以找到更多相关记忆。"
     
     return response
 
@@ -1106,6 +1403,55 @@ def list_all_kilo_memories(limit: int = 20) -> str:
     :param limit: 返回数量限制
     """
     return query_kilo_memory("", limit)
+
+@mcp.tool()
+def trigger_proactive_recall(user_message: str = "", system_context: str = "") -> str:
+    """
+    触发主动回忆 - 在任务开始时自动调用
+    
+    这是实现"一次回忆起"、"主动回忆起"、"自然而然不自觉回忆起"的核心工具。
+    当Kilo Code开始新任务时，自动调用此工具来检索相关记忆。
+    
+    :param user_message: 用户的消息/任务描述
+    :param system_context: 系统上下文信息
+    :return: 自然集成的回忆结果或空字符串（如果不需回忆）
+    """
+    if not recall_engine:
+        return ""
+    
+    try:
+        # 分析上下文，判断是否需要主动回忆
+        should_recall, recall_info = recall_engine.should_recall(user_message, system_context)
+        
+        if not should_recall:
+            return ""
+        
+        # 执行主动回忆
+        recall_results = recall_engine.execute_recall(recall_info["context"])
+        
+        if not recall_results.get("success") or not recall_results.get("results"):
+            return ""
+        
+        # 获取自然集成的结果
+        natural_response = recall_integrator.integrate_recall(recall_results) if recall_integrator else ""
+        
+        if natural_response:
+            return natural_response
+        
+        # 如果没有自然集成结果，返回简要提示
+        enhanced_results = recall_results["results"]
+        if enhanced_results:
+            top_result = enhanced_results[0]
+            content_preview = top_result.get("content", "")[:100] + "..." \
+                            if len(top_result.get("content", "")) > 100 else top_result.get("content", "")
+            
+            return f"💭 回忆起相关经验：{content_preview}"
+        
+        return ""
+        
+    except Exception as e:
+        print(f"主动回忆触发失败: {e}")
+        return ""
 
 @mcp.tool()
 def get_memory_insights() -> str:

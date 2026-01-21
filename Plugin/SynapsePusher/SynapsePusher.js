@@ -139,7 +139,7 @@ function connectToWebSocketLogSource() {
         return;
     }
 
-    // Corrected path to /VCPlog/ (lowercase L) to match WebSocketServer.js regex
+    // Corrected path to /VCPlog/ (uppercase L) to match WebSocketServer.js regex
     const wsUrl = `ws://localhost:${pluginConfigInstance.SERVER_PORT}/VCPlog/VCP_Key=${pluginConfigInstance.VCP_Key}`;
     if (pluginConfigInstance && pluginConfigInstance.DebugMode) {
         console.log(`[SynapsePusher] Attempting to connect to VCPLog WebSocket source at: ${wsUrl}`);
@@ -297,8 +297,11 @@ function registerRoutes(app, config, projectBasePath) {
         console.log('[SynapsePusher] registerRoutes called. Initialized config:', pluginConfigInstance);
     }
 
-    console.log('[SynapsePusher] Plugin loaded. Attempting to connect to WebSocket log source if config is present.');
-    connectToWebSocketLogSource();
+    console.log('[SynapsePusher] Plugin loaded. Will attempt to connect to WebSocket log source after delay.');
+    // Delay initial connection to ensure WebSocket server is ready
+    setTimeout(() => {
+        connectToWebSocketLogSource();
+    }, 5000);
 }
 
 function shutdown() {

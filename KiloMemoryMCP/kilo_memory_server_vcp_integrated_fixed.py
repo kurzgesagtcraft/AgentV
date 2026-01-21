@@ -91,7 +91,8 @@ class VCPAPIClient:
             # 调用真正的VCP向量搜索API
             return self._real_vcp_search(query, limit)
         except Exception as e:
-            print(f"VCP搜索失败: {e}")
+            sys.stderr.write(f"VCP搜索失败: {e}\n")
+            sys.stderr.flush()
             # 回退到模拟搜索
             return self._simulate_vcp_search(query, limit)
     
@@ -249,13 +250,16 @@ class VCPAPIClient:
         return list(set(expansions))[:5]
     
     def start_vcp_service(self) -> bool:
-        """启动VCP服务"""
+        """启动VCP服务（无窗口版本）"""
         try:
-            print("🚀 正在尝试启动VCP服务...")
+            # 使用 sys.stderr 输出，确保在 MCP 环境中可见
+            sys.stderr.write("🚀 正在尝试启动VCP服务...\n")
+            sys.stderr.flush()
             
             # 检查VCP服务器是否已经在运行
             if self.is_vcp_running():
-                print("✅ VCP服务已经在运行")
+                sys.stderr.write("✅ VCP服务已经在运行\n")
+                sys.stderr.flush()
                 return True
             
             # 查找VCP服务器启动脚本
@@ -272,67 +276,76 @@ class VCPAPIClient:
                     break
             
             if not server_script:
-                print("❌ 未找到VCP服务器启动脚本")
+                sys.stderr.write("❌ 未找到VCP服务器启动脚本\n")
+                sys.stderr.flush()
                 return False
             
-            print(f"📁 找到VCP服务器脚本: {server_script}")
+            sys.stderr.write(f"📁 找到VCP服务器脚本: {server_script}\n")
+            sys.stderr.flush()
             
             # 根据脚本类型启动服务
             if server_script.endswith(".js"):
-                # Node.js服务器
-                cmd = ["node", server_script]
+                # Node.js服务器 - 使用 start 命令在后台无窗口运行
+                if sys.platform == "win32":
+                    cmd = ["cmd", "/c", "start", "/B", "node", server_script]
+                else:
+                    cmd = ["node", server_script]
             elif server_script.endswith(".bat"):
-                # Windows批处理脚本
-                cmd = [server_script]
+                # Windows批处理脚本 - 使用 start 命令在后台无窗口运行
+                if sys.platform == "win32":
+                    cmd = ["cmd", "/c", "start", "/B", server_script]
+                else:
+                    cmd = [server_script]
             else:
-                print(f"❌ 不支持的脚本类型: {server_script}")
+                sys.stderr.write(f"❌ 不支持的脚本类型: {server_script}\n")
+                sys.stderr.flush()
                 return False
             
-            # 在后台启动服务
+            # 在后台启动服务（无窗口）
             try:
-                # 使用subprocess启动服务
+                # 使用 subprocess 启动服务，不创建新控制台窗口
+                startupinfo = None
                 if sys.platform == "win32":
-                    # Windows: 使用CREATE_NEW_CONSOLE创建新控制台
-                    process = subprocess.Popen(
-                        cmd,
-                        cwd=PROJECT_ROOT,
-                        creationflags=subprocess.CREATE_NEW_CONSOLE,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True,
-                        encoding='utf-8'
-                    )
-                else:
-                    # Linux/Mac: 使用nohup在后台运行
-                    process = subprocess.Popen(
-                        cmd,
-                        cwd=PROJECT_ROOT,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True,
-                        encoding='utf-8'
-                    )
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = subprocess.SW_HIDE
                 
-                print(f"✅ VCP服务启动中 (PID: {process.pid})...")
+                process = subprocess.Popen(
+                    cmd,
+                    cwd=PROJECT_ROOT,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding='utf-8',
+                    startupinfo=startupinfo
+                )
+                
+                sys.stderr.write(f"✅ VCP服务启动中 (PID: {process.pid})...\n")
+                sys.stderr.flush()
                 
                 # 等待服务启动
                 for i in range(30):  # 最多等待30秒
                     time.sleep(1)
                     if self.is_vcp_running():
-                        print("✅ VCP服务启动成功！")
+                        sys.stderr.write("✅ VCP服务启动成功！\n")
+                        sys.stderr.flush()
                         return True
                     if i % 5 == 0:
-                        print(f"⏳ 等待VCP服务启动... ({i+1}/30秒)")
+                        sys.stderr.write(f"⏳ 等待VCP服务启动... ({i+1}/30秒)\n")
+                        sys.stderr.flush()
                 
-                print("⚠️ VCP服务启动超时，可能仍在启动中")
+                sys.stderr.write("⚠️ VCP服务启动超时，可能仍在启动中\n")
+                sys.stderr.flush()
                 return False
                 
             except Exception as e:
-                print(f"❌ 启动VCP服务失败: {e}")
+                sys.stderr.write(f"❌ 启动VCP服务失败: {e}\n")
+                sys.stderr.flush()
                 return False
                 
         except Exception as e:
-            print(f"❌ 启动VCP服务时发生错误: {e}")
+            sys.stderr.write(f"❌ 启动VCP服务时发生错误: {e}\n")
+            sys.stderr.flush()
             return False
     
     def ensure_vcp_service(self) -> bool:
@@ -852,37 +865,43 @@ def trigger_vcp_recall(context: str, max_memories: int = 5) -> str:
 
 # 主函数
 if __name__ == "__main__":
-    print("=" * 60)
-    print("VCP集成版 KiloMemoryMCP 服务器（修复版）")
-    print("=" * 60)
-    print("核心特性:")
-    print("1. ✅ 真正的VCP集成：通过HTTP API调用VCP系统")
-    print("2. ✅ 语义搜索：使用VCP的TagMemo系统进行语义扩展")
-    print("3. ✅ 主动回忆：trigger_vcp_recall工具实现'一次回忆起'")
-    print("4. ✅ 质量评估：多维度的记忆质量评分")
-    print("5. ✅ 系统统计：实时监控记忆系统状态")
-    print("6. ✅ 自动启动：打开MCP时自动启动VCP服务")
-    print("=" * 60)
+    sys.stderr.write("=" * 60 + "\n")
+    sys.stderr.write("VCP集成版 KiloMemoryMCP 服务器（修复版）\n")
+    sys.stderr.write("=" * 60 + "\n")
+    sys.stderr.write("核心特性:\n")
+    sys.stderr.write("1. ✅ 真正的VCP集成：通过HTTP API调用VCP系统\n")
+    sys.stderr.write("2. ✅ 语义搜索：使用VCP的TagMemo系统进行语义扩展\n")
+    sys.stderr.write("3. ✅ 主动回忆：trigger_vcp_recall工具实现'一次回忆起'\n")
+    sys.stderr.write("4. ✅ 质量评估：多维度的记忆质量评分\n")
+    sys.stderr.write("5. ✅ 系统统计：实时监控记忆系统状态\n")
+    sys.stderr.write("6. ✅ 自动启动：打开MCP时自动启动VCP服务（无窗口）\n")
+    sys.stderr.write("=" * 60 + "\n")
     
     # 检查并确保VCP服务运行
     vcp_client = VCPAPIClient()
-    print("🔍 检查VCP服务状态...")
+    sys.stderr.write("🔍 检查VCP服务状态...\n")
+    sys.stderr.flush()
     
     if vcp_client.is_vcp_running():
-        print("✅ VCP服务器连接正常")
+        sys.stderr.write("✅ VCP服务器连接正常\n")
+        sys.stderr.flush()
     else:
-        print("⚠️ VCP服务器未运行，尝试自动启动...")
+        sys.stderr.write("⚠️ VCP服务器未运行，尝试自动启动...\n")
+        sys.stderr.flush()
         
         # 尝试自动启动VCP服务
         if vcp_client.ensure_vcp_service():
-            print("✅ VCP服务自动启动成功！")
+            sys.stderr.write("✅ VCP服务自动启动成功！\n")
+            sys.stderr.flush()
         else:
-            print("❌ VCP服务自动启动失败，将使用回退搜索")
-            print("💡 提示：您可以手动启动VCP服务：")
-            print(f"   1. 打开终端，切换到: {PROJECT_ROOT}")
-            print("   2. 运行: node server.js")
-            print("   3. 或运行: start_server.bat")
+            sys.stderr.write("❌ VCP服务自动启动失败，将使用回退搜索\n")
+            sys.stderr.write("💡 提示：您可以手动启动VCP服务：\n")
+            sys.stderr.write(f"   1. 打开终端，切换到: {PROJECT_ROOT}\n")
+            sys.stderr.write("   2. 运行: node server.js\n")
+            sys.stderr.write("   3. 或运行: start_server.bat\n")
+            sys.stderr.flush()
     
     # 运行 MCP 服务器
-    print("\n🚀 启动KiloMemoryMCP服务器...")
+    sys.stderr.write("\n🚀 启动KiloMemoryMCP服务器...\n")
+    sys.stderr.flush()
     mcp.run()

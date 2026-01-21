@@ -1,6 +1,7 @@
 
-const { KnowledgeBaseManager } = require('../KnowledgeBaseManager.js');
-const { getSingleEmbedding } = require('../EmbeddingUtils');
+const path = require('path');
+const KnowledgeBaseManager = require(path.join(__dirname, '..', '..', 'KnowledgeBaseManager.js'));
+const { getSingleEmbedding } = require(path.join(__dirname, '..', '..', 'EmbeddingUtils'));
 
 function extractKeywords(text) {
     const words = text.toLowerCase()
@@ -13,7 +14,7 @@ function extractKeywords(text) {
 
 function buildRecallQuery(context, keywords) {
     if (keywords.length > 0) {
-        return \`\${context} \${keywords.join(' ')}\`;
+        return `${context} ${keywords.join(' ')}`;
     }
     return context;
 }
@@ -63,7 +64,7 @@ async function main() {
             .filter(result => result.score >= 0.3)
             .slice(0, maxMemories)
             .map((result, index) => ({
-                id: \`recall_\${Date.now()}_\${index}\`,
+                id: `recall_${Date.now()}_${index}`,
                 text: result.text,
                 score: result.score,
                 source: result.sourceFile,
@@ -75,7 +76,7 @@ async function main() {
         // 构建回忆总结
         let summary;
         if (relevantResults.length === 0) {
-            summary = \`基于当前上下文"\${context.substring(0, 50)}..."，没有找到相关的历史记忆。\`;
+            summary = `基于当前上下文"${context.substring(0, 50)}..."，没有找到相关的历史记忆。`;
         } else {
             const memoryCount = relevantResults.length;
             const avgRelevance = relevantResults.reduce((sum, m) => sum + m.score, 0) / memoryCount;
@@ -87,9 +88,9 @@ async function main() {
             });
             const topTags = Array.from(tagSet).slice(0, 5);
             
-            summary = \`基于当前上下文，系统主动回忆了 \${memoryCount} 个相关记忆（平均相关性：\${relevanceLevel}）。\`;
+            summary = `基于当前上下文，系统主动回忆了 ${memoryCount} 个相关记忆（平均相关性：${relevanceLevel}）。`;
             if (topTags.length > 0) {
-                summary += \` 相关标签：\${topTags.join('、')}\`;
+                summary += ` 相关标签：${topTags.join('、')}`;
             }
         }
         

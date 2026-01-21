@@ -37,6 +37,7 @@ EVOLUTION_DB_PATH = os.path.join(PROJECT_ROOT, "VectorStore", "memory_evolution.
 # VCP API配置
 VCP_API_URL = "http://localhost:6005"  # VCP服务器地址
 VCP_API_TIMEOUT = 10  # 秒
+VCP_API_KEY = "vcp123456"  # 从config.env读取的Key
 
 # 初始化 FastMCP
 mcp = FastMCP("KiloMemoryMCP_VCP_Integrated_Fixed")
@@ -72,10 +73,16 @@ class MemoryQuality:
 
 # VCP API客户端
 class VCPAPIClient:
-    def __init__(self, base_url: str = VCP_API_URL):
+    def __init__(self, base_url: str = VCP_API_URL, api_key: str = VCP_API_KEY):
         self.base_url = base_url
+        self.api_key = api_key
         self.session = requests.Session()
         self.session.timeout = VCP_API_TIMEOUT
+        # 设置默认的Authorization头
+        self.session.headers.update({
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        })
     
     def is_vcp_running(self) -> bool:
         """检查VCP服务器是否运行"""

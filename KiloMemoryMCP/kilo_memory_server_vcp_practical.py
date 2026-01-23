@@ -467,9 +467,25 @@ main();
         return result
     
     def trigger_active_recall(self, context: str, max_memories: int = 5) -> Dict:
-        """触发主动回忆"""
+        """触发主动回忆（无回退版本）"""
         try:
-            # 直接使用Python实现主动回忆，避免Node.js调用问题
+            # 调用Node.js脚本进行真正的主动回忆
+            result = self.call_node_script("recall", {
+                "context": context,
+                "maxMemories": max_memories
+            })
+            
+            # 直接返回Node.js脚本的结果，不进行回退
+            return result
+                
+        except Exception as e:
+            print(f"❌ trigger_active_recall 调用失败: {e}")
+            # 不进行回退，直接返回错误
+            return {"success": False, "error": str(e)}
+    
+    def _fallback_active_recall(self, context: str, max_memories: int = 5) -> Dict:
+        """回退的主动回忆实现"""
+        try:
             import datetime
             
             # 模拟搜索记忆

@@ -1,5 +1,32 @@
 
 const path = require('path');
+const fs = require('fs');
+
+// 加载环境变量
+const envPath = path.join(__dirname, '..', '..', 'config.env');
+if (fs.existsSync(envPath)) {
+    const envContent = fs.readFileSync(envPath, 'utf-8');
+    envContent.split('\n').forEach(line => {
+        const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
+        if (match) {
+            const key = match[1];
+            let value = match[2] || '';
+            
+            // 移除注释
+            if (value.includes('#')) {
+                value = value.split('#')[0].trim();
+            }
+            
+            // 移除引号
+            value = value.replace(/^['"]|['"]$/g, '').trim();
+            
+            if (!process.env[key]) {
+                process.env[key] = value;
+            }
+        }
+    });
+}
+
 const KnowledgeBaseManager = require(path.join(__dirname, '..', '..', 'KnowledgeBaseManager.js'));
 const { getSingleEmbedding } = require(path.join(__dirname, '..', '..', 'EmbeddingUtils'));
 
